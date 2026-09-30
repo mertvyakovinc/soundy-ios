@@ -1,0 +1,49 @@
+name: iOS build (unsigned .ipa for AltStore / Sideloadly)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Build (no code signing — AltStore signs with your Apple ID)
+        run: |
+          xcodebuild -project Soundy.xcodeproj -target Soundy -configuration Release -sdk iphoneos \
+            SYMROOT="$PWD/build" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build | tee xcodebuild.log | grep -E "error:|warning: unre|BUILD (SUCCEEDED|FAILED)" || true
+          test -d build/Release-iphoneos/Soundy.app || { echo "::error::build failed"; grep -E "error:" xcodebuild.log | head -50; exit 1; }
+
+      - name: Package .ipa
+        run: |
+          mkdir -p Payload
+          cp -R build/Release-iphoneos/Soundy.app Payload/
+          zip -qr Soundy.ipa Payload
+          ls -l Soundy.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Soundy-ipa
+          path: Soundy.ipa
+
+      - name: Publish as the "latest" release (direct download link for the phone)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Soundy for iOS (latest build)
+          body: "Unsigned build — install with AltStore or Sideloadly using your Apple ID. Commit ${{ github.sha }}"
+          prerelease: true
+          files: Soundy.ipa
